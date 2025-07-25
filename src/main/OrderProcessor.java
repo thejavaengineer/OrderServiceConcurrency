@@ -10,6 +10,8 @@ import java.util.stream.Collectors;
 public class OrderProcessor {
     private final Map<String, Integer> inventory;
     OrderValidator validator = new OrderValidator();
+    private final Object inventoryLock = new Object(); // Lock object
+
 
 
     public OrderProcessor(){
@@ -42,26 +44,30 @@ public class OrderProcessor {
 
         // Step 4: Log success
         System.out.println("Successfully processed order: " + order.getOrderId());
-        System.out.println("Current inventory: " + inventory);
-    }
+        // Print inventory snapshot
+        synchronized (inventoryLock) {
+            System.out.println("Inventory snapshot: " + inventory);
+        }    }
 
     private boolean checkAndUpdateInventory(Order order) {
-        // First check if all items are available
-        OrderValidator validator1 = new OrderValidator(inventory);
-        if (!validator1.validate(order)) {
-            System.out.println("Order validation failed for: " + order.getOrderId());
-            return false;
+        synchronized (inventoryLock) {
+            // First check if all items are available
+            OrderValidator validator1 = new OrderValidator(inventory);
+            if (!validator1.validate(order)) {
+                System.out.println("Order validation failed for: " + order.getOrderId());
+                return false;
+            }
+
+            // Update inventory
+            Map<String, Long> itemCounts = order.getItems().stream()
+                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+
+            itemCounts.forEach((item, count) -> {
+                int newQuantity = inventory.get(item) - count.intValue();
+                inventory.put(item, newQuantity);
+            });
+            return true;
         }
-
-        // Update inventory
-        Map<String, Long> itemCounts = order.getItems().stream()
-                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
-
-        itemCounts.forEach((item, count) -> {
-            int newQuantity = inventory.get(item) - count.intValue();
-            inventory.put(item, newQuantity);
-        });
-        return true;
     }
 
     private void simulatePaymentProcessing() {
