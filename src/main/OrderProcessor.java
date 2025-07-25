@@ -4,24 +4,26 @@ import main.validator.OrderValidator;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class OrderProcessor {
-    private final Map<String, Integer> inventory;
+    private final ConcurrentHashMap<String, AtomicInteger> inventory;
     OrderValidator validator = new OrderValidator();
     private final Object inventoryLock = new Object(); // Lock object
 
 
 
     public OrderProcessor(){
-        inventory = new HashMap<>();
-        inventory.put("Laptop", 50);
-        inventory.put("Mouse", 200);
-        inventory.put("Keyboard", 150);
-        inventory.put("Monitor", 75);
-        inventory.put("iPhone", 100);
-        inventory.put("AirPods", 120);
+        inventory = new ConcurrentHashMap<>();
+        inventory.put("Laptop", new AtomicInteger(50));
+        inventory.put("Mouse", new AtomicInteger(200));
+        inventory.put("Keyboard", new AtomicInteger(150));
+        inventory.put("Monitor", new AtomicInteger(75));
+        inventory.put("iPhone", new AtomicInteger(100));
+        inventory.put("AirPods", new AtomicInteger(120));
     }
 
     public void processOrder(Order order){
@@ -45,28 +47,57 @@ public class OrderProcessor {
         // Step 4: Log success
         System.out.println("Successfully processed order: " + order.getOrderId());
         // Print inventory snapshot
-        synchronized (inventoryLock) {
-            System.out.println("Inventory snapshot: " + inventory);
-        }    }
+        printInventorySnapshot();
+        }
 
     private boolean checkAndUpdateInventory(Order order) {
         synchronized (inventoryLock) {
             // First check if all items are available
-            OrderValidator validator1 = new OrderValidator(inventory);
-            if (!validator1.validate(order)) {
-                System.out.println("Order validation failed for: " + order.getOrderId());
-                return false;
+            Map<String, Integer> itemsToReserve = new HashMap<>();
+            for (String item : order.getItems()) {
+                itemsToReserve.merge(item, 1, Integer::sum);
             }
 
-            // Update inventory
-            Map<String, Long> itemCounts = order.getItems().stream()
-                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+            // Try to reserve all items
+            Map<String, Integer> reserved = new HashMap<>();
 
-            itemCounts.forEach((item, count) -> {
-                int newQuantity = inventory.get(item) - count.intValue();
-                inventory.put(item, newQuantity);
-            });
+            for (Map.Entry<String, Integer> entry : itemsToReserve.entrySet()) {
+                String item = entry.getKey();
+                int needed = entry.getValue();
+
+                AtomicInteger stock = inventory.get(item);
+                if (stock == null) {
+                    rollbackReservations(reserved);
+                    return false;
+                }
+
+                // Try to reserve
+                int currentStock = stock.get();
+                if (currentStock < needed) {
+                    rollbackReservations(reserved);
+                    return false;
+                }
+
+                // Use compareAndSet for atomic update
+                while (true) {
+                    int current = stock.get();
+                    if (current < needed) {
+                        rollbackReservations(reserved);
+                        return false;
+                    }
+                    if (stock.compareAndSet(current, current - needed)) {
+                        reserved.put(item, needed);
+                        break;
+                    }
+                    // Retry if another thread modified the value
+                }
+            }
             return true;
+        }
+    }
+    private void rollbackReservations(Map<String, Integer> reserved) {
+        for (Map.Entry<String, Integer> entry : reserved.entrySet()) {
+            inventory.get(entry.getKey()).addAndGet(entry.getValue());
         }
     }
 
@@ -78,4 +109,14 @@ public class OrderProcessor {
         }
     }
 
+    private void printInventorySnapshot() {
+        StringBuilder sb = new StringBuilder("Inventory: {");
+        inventory.forEach((item, quantity) ->
+                sb.append(item).append("=").append(quantity.get()).append(", "));
+        if (sb.length() > 12) {
+            sb.setLength(sb.length() - 2);
+        }
+        sb.append("}");
+        System.out.println(sb.toString());
+    }
 }
