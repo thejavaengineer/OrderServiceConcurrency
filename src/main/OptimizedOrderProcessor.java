@@ -97,7 +97,7 @@ public class OptimizedOrderProcessor {
 
     private double calculateCpuUtilization() {
         int totalThreads = mainExecutor.getPoolSize() + computeExecutor.getPoolSize();
-        int activeThreads = mainExecutor.getActiveCount() + computeExecutor.getActiveCount();
+        int activeThreads = mainExecutor.getActiveCount() + computeExecutor.getActiveThreadCount();
         int cpuCores = Runtime.getRuntime().availableProcessors();
 
         // Estimate CPU utilization based on active threads and cores
